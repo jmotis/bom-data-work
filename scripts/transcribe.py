@@ -1,8 +1,10 @@
 """Send each bill image to Claude and save its transcription as JSON.
 
-This is the only AI step. Its outputs are saved once, per image, per run, and
-committed to git; every later step reads these files and is ordinary code. An image
-is not re-sent if its JSON already exists (use --force to redo it).
+This is the only AI step. It runs Claude Code in the terminal ("claude -p"), so it
+uses the Claude subscription you are logged in with, not an API key. Its outputs are
+saved once, per image, per run, and committed to git; every later step reads these
+files and is ordinary code. An image is not re-sent if its JSON already exists (use
+--force to redo it).
 
 Usage:
     python scripts/transcribe.py              # primary run ("a")
@@ -14,12 +16,17 @@ import argparse
 import base64
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 from datetime import datetime, timezone
 
-import anthropic
 from PIL import Image
 
 from common import load_config, path, read_csv, sha256_text
+
+SYSTEM_PROMPT = "You transcribe historical printed documents accurately."
 
 PROMPT = """\
 This image is one page of an eighteenth-century London weekly Bill of Mortality \
@@ -38,8 +45,9 @@ up. The printed totals sometimes genuinely disagree, and those disagreements are
 evidence the researchers need to see.
 - Zeros are often damaged and print like "c" or "o" (e.g. "6c" or "3o"). Write every \
 damaged zero as 0, in both as_printed and value ("6c" becomes "60").
-- as_printed: the characters as they appear, with damaged zeros written as 0, e.g. \
-"60", "—" for a dash, "" for nothing printed.
+- as_printed: only the characters of the number itself (no label, no trailing \
+full stop), with damaged zeros written as 0, e.g. "60", "—" for a dash, "" for \
+nothing printed.
 - value: your best reading as an integer, or null if the cell is blank, a dash, or \
 unreadable.
 - legibility: "clear"; "uncertain" if you are not sure of every digit; "illegible" \
@@ -51,7 +59,8 @@ becomes "A Hundred and one").
 whose label the brace joins, and say so in transcriber_notes.
 - burials_change.direction: "increased", "decreased", or "not_printed".
 - transcriber_notes: anything a checker should look at (damage, ambiguous \
-placement, a number you could read two ways). Empty string if nothing.
+placement, a number you could read two ways). Empty string if nothing. Do not add \
+up the figures or comment on whether totals agree; that is checked separately.
 """
 
 CELL = {
@@ -106,6 +115,13 @@ SCHEMA = {
 
 MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
+# Removed from the environment of each "claude" call so it always uses the logged-in
+# subscription. If either is set, Claude Code would bill that key instead.
+API_KEY_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+# Stop the run after this many failures in a row (e.g. a subscription usage limit).
+MAX_CONSECUTIVE_FAILURES = 3
+
 
 def image_block(p, max_edge):
     """Send the original bytes when possible; otherwise downscale / convert to PNG."""
@@ -125,31 +141,66 @@ def image_block(p, max_edge):
     }
 
 
-def transcribe(client, cfg, image_path):
+def claude_env():
+    return {k: v for k, v in os.environ.items() if k not in API_KEY_VARS}
+
+
+def check_claude():
+    """Exit with a clear message unless Claude Code is installed and logged in."""
+    if shutil.which("claude") is None:
+        sys.exit("Claude Code is not installed: see https://code.claude.com/docs/en/setup")
+    out = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True, env=claude_env())
+    try:
+        status = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        sys.exit(f"could not read 'claude auth status':\n{out.stdout}{out.stderr}")
+    if not status.get("loggedIn"):
+        sys.exit("Claude Code is not logged in. Run 'claude', then /login with your Claude account.")
+    version = subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.strip()
+    return version, status.get("authMethod", "unknown")
+
+
+def transcribe(cfg, image_path):
     t = cfg["transcription"]
-    response = client.beta.messages.create(
-        model=t["model"],
-        max_tokens=t["max_tokens"],
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        thinking={"type": "adaptive"},
-        output_config={"effort": t["effort"], "format": {"type": "json_schema", "schema": SCHEMA}},
-        messages=[{
-            "role": "user",
-            "content": [image_block(image_path, t["max_long_edge_px"]), {"type": "text", "text": PROMPT}],
-        }],
-    )
-    record = {
-        "stop_reason": response.stop_reason,
-        "model_served": response.model,
-        "usage": response.usage.model_dump(mode="json"),
+    message = {"type": "user", "message": {"role": "user", "content": [
+        image_block(image_path, t["max_long_edge_px"]), {"type": "text", "text": PROMPT},
+    ]}}
+    cmd = [
+        "claude", "-p",
+        "--model", t["model"],
+        "--effort", t["effort"],
+        "--system-prompt", SYSTEM_PROMPT,
+        "--json-schema", json.dumps(SCHEMA),
+        "--tools", "",               # no tools: Claude only looks at the image
+        "--safe-mode",               # ignore the user's own CLAUDE.md, plugins, hooks and MCP servers
+        "--no-session-persistence",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json", "--verbose",
+    ]
+    try:
+        proc = subprocess.run(cmd, input=json.dumps(message) + "\n", capture_output=True, text=True,
+                              env=claude_env(), timeout=t["timeout_seconds"])
+    except subprocess.TimeoutExpired:
+        return {"error": f"no answer after {t['timeout_seconds']} seconds"}
+
+    events = []
+    for line in proc.stdout.splitlines():
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    if result is None:
+        return {"error": f"claude exited with code {proc.returncode}: {proc.stderr.strip()[:500]}"}
+    if result.get("is_error") or result.get("structured_output") is None:
+        return {"error": f"{result.get('subtype')}: {str(result.get('result', ''))[:500]}"}
+    served = [e["message"]["model"] for e in events if e.get("type") == "assistant" and "model" in e.get("message", {})]
+    return {
+        "model_served": served[-1] if served else "unknown",
+        "usage": result.get("usage"),
+        "duration_ms": result.get("duration_ms"),
+        "transcription": result["structured_output"],
     }
-    if response.stop_reason != "end_turn":
-        record["error"] = f"stop_reason={response.stop_reason}"
-        return record
-    text = next(b.text for b in response.content if b.type == "text")
-    record["transcription"] = json.loads(text)
-    return record
 
 
 def main():
@@ -164,9 +215,10 @@ def main():
     out_dir = path(cfg, "transcriptions") / run
     out_dir.mkdir(parents=True, exist_ok=True)
     raw = path(cfg, "raw_images")
-    client = anthropic.Anthropic()
+    cli_version, auth_method = check_claude()
+    print(f"Claude Code {cli_version}, logged in ({auth_method})")
 
-    done = 0
+    done = failures = 0
     for row in read_csv(path(cfg, "manifest")):
         out = out_dir / f"{row['image_id']}.json"
         image_path = raw / row["filename"]
@@ -178,15 +230,18 @@ def main():
         if args.limit is not None and done >= args.limit:
             break
         print(f"transcribing {row['filename']} ...", flush=True)
-        try:
-            record = transcribe(client, cfg, image_path)
-        except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
-            # The SDK has already retried rate limits and server errors; leave this one for the next run.
-            print(f"  API error, will retry next run: {e}")
-            continue
+        record = transcribe(cfg, image_path)
         if "error" in record:
+            # Nothing is saved, so the next run tries this image again.
             print(f"  not saved: {record['error']}")
+            failures += 1
+            if failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"stopping after {failures} failures in a row (usage limit reached?); run again later")
+                break
             continue
+        failures = 0
+        if record["model_served"] != cfg["transcription"]["model"]:
+            print(f"  note: answered by {record['model_served']}, not {cfg['transcription']['model']}")
         record = {
             "image_id": row["image_id"],
             "sha256": row["sha256"],
@@ -194,9 +249,9 @@ def main():
             "run": run,
             "model_requested": cfg["transcription"]["model"],
             "effort": cfg["transcription"]["effort"],
-            "prompt_sha256": sha256_text(PROMPT),
+            "prompt_sha256": sha256_text(SYSTEM_PROMPT + "\n" + PROMPT),
             "schema_sha256": sha256_text(json.dumps(SCHEMA, sort_keys=True)),
-            "sdk_version": anthropic.__version__,
+            "claude_code_version": cli_version,
             "transcribed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             **record,
         }

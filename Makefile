@@ -8,7 +8,7 @@ all: manifest transcribe csv
 manifest:     ## scan data/raw and update data/manifest.csv
 	$(PY) scripts/ingest.py
 
-transcribe:   ## AI step: transcribe any image without a saved JSON (run "a")
+transcribe:   ## AI step (claude -p): transcribe any image without a saved JSON (run "a")
 	$(PY) scripts/transcribe.py
 
 check-run:    ## optional: independent second transcription (run "b") for cross-checking

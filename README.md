@@ -6,7 +6,8 @@ deaths by age. Researchers then check the CSVs against the page images.
 **What is AI and what is code:**
 
 - **AI does one thing:** `transcribe.py` sends each page image to Claude, which reads
-  the numbers. Each answer is saved once as a JSON file, and the files are committed to
+  the numbers. It runs Claude Code in the terminal (`claude -p`), so it uses the Claude
+  subscription you are logged in with; no API key is needed. Each answer is saved once as a JSON file, and the files are committed to
   git. They are never regenerated unless you ask. They are the fixed record of what the
   AI read, and every later step works from them.
 - **Everything else is ordinary code:** listing the files, mapping labels to
@@ -28,13 +29,22 @@ The totals are included so the code can check the age counts against them.
 
 ## Setup (once)
 
+You need Python 3.11 or newer, git, and [Claude Code](https://code.claude.com/docs/en/setup)
+logged in to a Claude subscription whose plan includes the model set in `config.toml`.
+
 ```bash
 git clone https://github.com/jmotis/bom-data-work.git
 cd bom-data-work
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=...        # from console.anthropic.com
+claude          # first time only: type /login, sign in with your Claude account, then /exit
+claude auth status   # should show "loggedIn": true
 ```
+
+`transcribe.py` removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from each
+`claude` call, so an API key set in your terminal is never billed by mistake. It also
+runs Claude Code in safe mode with no tools, so your own settings, plugins and
+CLAUDE.md files can't affect the transcription.
 
 ## Workflow
 
@@ -65,17 +75,23 @@ this step.
 
 ### 3. `make transcribe` (the AI step)
 
-Try `python scripts/transcribe.py --limit 5` first. Images that already have a saved
-transcription are skipped, so the step can be stopped and restarted. Each JSON file in
-`data/transcriptions/a/` records:
+Try `python scripts/transcribe.py --limit 5` first. Each page takes about 15–25
+seconds. Images that already have a saved transcription are skipped, so the step can be
+stopped with Ctrl-C and restarted. A page that fails is not saved and is tried again on
+the next run. After three failures in a row the script stops, which usually means the
+subscription's usage limit has been reached: wait for it to reset, then run it again.
+Commit the new JSON files as you go.
 
-- the model and effort level
+Each JSON file in `data/transcriptions/a/` records:
+
+- the model requested and the model that actually answered (the script warns if they
+  differ), and the effort level
 - checksums of the prompt and output format
-- the SDK version and the time of the request
+- the Claude Code version, token usage and the time of the request
 
 **Optional second pass:** `make check-run` runs a second, independent transcription.
 Wherever the two disagree, the cell goes into the review queue. This catches most
-one-off misreadings for roughly twice the cost.
+one-off misreadings, but uses about twice as much of the subscription.
 
 ### 4. `make csv` (code only)
 
@@ -170,6 +186,6 @@ Eight sample bills (1732–1751) are in the ground truth. What they show:
 
 ## Settings
 
-Everything adjustable is in `config.toml`: model, effort, image size, run names and
+Everything adjustable is in `config.toml`: model, effort, per-page timeout, image size, run names and
 paths. Changing the model or prompt changes future transcriptions only. Existing
 JSONs are kept unless you run `transcribe.py --force`.

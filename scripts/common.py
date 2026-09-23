@@ -90,7 +90,12 @@ def age_key_for_label(label):
 
 
 def normalize_printed(s):
-    """Damaged zeros often print as "c" or "o" ("6c" = 60). Write them as 0 in number-like cells."""
+    """Tidy the printed characters of a number; never changes which number they show.
+
+    Drops surrounding punctuation ("233." -> "233"). Damaged zeros often print as "c"
+    or "o" ("6c" = 60), so those are written as 0 in number-like cells.
+    """
+    s = s.strip().strip(".,;:·")
     if re.fullmatch(r"[0-9cCoO]+", s) and re.search(r"[0-9]", s):
         return re.sub(r"[cCoO]", "0", s)
     return s
