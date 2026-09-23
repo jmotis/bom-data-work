@@ -76,7 +76,8 @@ def age_key_for_label(label):
     for key, phrase in STANDARD_AGES:
         if s == phrase or s == phrase.replace(" a hundred", " hundred"):
             return key
-    m = re.fullmatch(r"a hundred(?: and (\w+))?", s)
+    # "A Hundred", "A Hundred and one", "A Hundred 5" (1743), and misprints like "A Huudred" (1736).
+    m = re.fullmatch(r"a h[a-z]{2,4}dred(?: (?:and )?(\w+))?", s)
     if m:
         extra = m.group(1)
         if extra is None:
@@ -86,6 +87,13 @@ def age_key_for_label(label):
         if extra in NUMBER_WORDS:
             return f"age_{100 + NUMBER_WORDS[extra]}"
     return None
+
+
+def normalize_printed(s):
+    """Damaged zeros often print as "c" or "o" ("6c" = 60). Write them as 0 in number-like cells."""
+    if re.fullmatch(r"[0-9cCoO]+", s) and re.search(r"[0-9]", s):
+        return re.sub(r"[cCoO]", "0", s)
+    return s
 
 
 def age_sort_order(key):
@@ -129,18 +137,19 @@ def cells_from_transcription(t):
     for group in ("christened", "buried"):
         for part in ("males", "females", "in_all"):
             c = t[group][part]
-            cells[f"{group}_{part}"] = {**c, "label": f"{group} {part}"}
+            cells[f"{group}_{part}"] = {**c, "as_printed": normalize_printed(c["as_printed"]), "label": f"{group} {part}"}
     change = t["burials_change"]
     value = change["value"]
     if value is not None and change["direction"] == "decreased":
         value = -value
     cells["burials_change"] = {
-        "value": value, "as_printed": change["as_printed"],
+        "value": value, "as_printed": normalize_printed(change["as_printed"]),
         "legibility": change["legibility"], "label": change["direction"],
     }
     for row in t["age_rows"]:
         key = age_key_for_label(row["printed_label"])
         cell = {k: row[k] for k in ("value", "as_printed", "legibility")}
+        cell["as_printed"] = normalize_printed(cell["as_printed"])
         cell["label"] = row["printed_label"]
         if key is None:
             unrecognized.append(row["printed_label"])

@@ -29,7 +29,8 @@ The totals are included so the code can check the age counts against them.
 ## Setup (once)
 
 ```bash
-cd bills-of-mortality
+git clone https://github.com/jmotis/bom-data-work.git
+cd bom-data-work
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=...        # from console.anthropic.com
@@ -78,7 +79,7 @@ one-off misreadings for roughly twice the cost.
 
 ### 4. `make csv` (code only)
 
-This writes three files to `data/output/`:
+This writes four files to `data/output/`:
 
 | File | Contents |
 |---|---|
@@ -94,12 +95,18 @@ This writes three files to `data/output/`:
 - All 12 standard age brackets are present.
 - Every age label maps to a known category.
 - Any cell the transcriber marked uncertain or illegible is listed.
+- Each number read matches the characters transcribed for it.
 - Run A and run B agree, if run B exists.
 - Week-to-week burial changes match the printed "Increased/Decreased" figure, where
   dates are filled in.
 
 **Counts:** a blank or dashed cell is counted as 0, with `legibility = blank` so you can
-tell it apart from a printed 0. An unreadable cell is left empty.
+tell it apart from a printed 0. An unreadable cell is left empty. An age category the
+bill doesn't print at all (e.g. no "A Hundred" rows) is also left empty.
+
+**Damaged zeros** often print as "c" or "o" (`6c` = 60). They are written as 0
+everywhere, including `as_printed`. The AI is told to do this, and the code also
+converts any that slip through.
 
 ### 5. Human review
 
@@ -109,7 +116,7 @@ add rows to `data/corrections.csv`:
 
 ```csv
 image_id,field,value,reviewer,date,note
-f6758c00622366db,40_to_50,60,JO,2026-10-01,printed "6c"; damaged zero
+f6758c00622366db,40_to_50,60,JO,2026-10-01,"damaged 6c, confirmed 60 at zoom"
 9c2f6382e72c5ecb,review_status,source_discrepancy,JO,2026-10-01,print itself does not add up
 e15c7f34290cdc82,review_status,verified,KK,2026-10-01,
 ```
@@ -125,11 +132,15 @@ Every human decision is recorded, can be replayed, and is under version control.
 ### 6. Measure accuracy
 
 `make evaluate` compares a run against `ground_truth/age_tables.csv`, which holds
-hand-checked values for sample pages. Re-run it whenever you change the model, prompt
+checked values for sample pages. Pages are matched by SHA-256, so the ground-truth
+images must be the exact files in `data/raw/`; the `note` on each page's first row
+says where its values came from. Re-run it whenever you change the model, prompt
 or effort, and report the result with the dataset. Add more hand-checked pages as the
 project goes on; about one in fifty, chosen at random, is a reasonable target.
 
-## Notes from the five sample pages
+## Notes from the sample pages
+
+Eight sample bills (1732–1751) are in the ground truth. What they show:
 
 - **The source itself can be wrong.** On sample `5.jpg` (bread assize of 31 Dec 1751):
   - the ages add up to 385
@@ -138,14 +149,24 @@ project goes on; about one in fifty, chosen at random, is a reasonable target.
 
   This is confirmed at 4× zoom; it is the print, not a misreading. The AI is told
   **not** to adjust numbers to make totals agree, so a reviewer should mark such bills
-  `source_discrepancy` rather than "fixing" them.
-- Damaged zeros print as "c" (`6c` = 60, `3c` = 30).
+  `source_discrepancy` rather than "fixing" them. The other seven samples balance
+  exactly.
+- Damaged zeros print as "c" (`6c` = 60, `3c` = 30); see **Damaged zeros** above.
 - The centenarian rows vary between editions:
-  - four bare "A Hundred" rows (1732)
+  - four bare "A Hundred" rows, sometimes with a count on the first (1732, 1736)
+  - a misprinted "A Huudred" (1736)
   - "A Hundred 5 · 1" (1743), read as 105 years with 1 death, which the total confirms
+  - "A Hundred and two" / "A Hundred and five" in braces with no counts (1747)
   - "A Hundred and one" / "A Hundred and three" with the count beside a brace (1751)
+  - no "A Hundred" rows at all (1738)
 
-  The code maps these to `age_100`, `age_101`, …, and flags labels it can't map.
+  The code maps all of these to `age_100`, `age_101`, …, and flags labels it can't map.
+- The burials line says either "Increased" or "Decreased"; a decrease is stored as a
+  negative number.
+- Samples `6.jpg`–`8.jpg` (1736, 1747, 1738) were read by Claude from images shared in
+  chat and are marked "not yet hand-checked" in the ground truth. Every total balances,
+  but someone should confirm them against the scans, and check that those images are
+  byte-identical to the copies in `data/raw/` (otherwise their SHA-256 won't match).
 
 ## Settings
 

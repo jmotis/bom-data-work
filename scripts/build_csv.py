@@ -87,6 +87,18 @@ def check_bill(cells, issues):
     return age_sum
 
 
+def check_printed(cells, issues):
+    """The number read (value) should match the characters transcribed (as_printed)."""
+    for field, cell in cells.items():
+        if cell["source"] != "ai" or cell["value"] is None or cell["legibility"] != "clear":
+            continue
+        printed = cell["as_printed"].strip()
+        if not printed.isdigit():
+            issues.append((field, f"read as {cell['value']}, but printed '{printed}' is not a plain number"))
+        elif int(printed) != abs(cell["value"]):
+            issues.append((field, f"read as {cell['value']}, but printed '{printed}'"))
+
+
 def compare_runs(primary, check, issues):
     for field in sorted(set(primary) | set(check), key=lambda k: (k not in TOTAL_FIELDS, age_sort_order(k), k)):
         if primary.get(field, {}).get("source", "").startswith("corrected"):
@@ -133,6 +145,7 @@ def main():
             cell.setdefault("source", "ai")
             if cell["legibility"] in ("uncertain", "illegible"):
                 issues.append((field, f"transcriber marked {cell['legibility']}: '{cell['as_printed']}'"))
+        check_printed(cells, issues)
         age_sum = check_bill(cells, issues)
 
         bills.append({

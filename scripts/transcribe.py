@@ -36,14 +36,16 @@ Rules:
 - Transcribe exactly what is printed. Do NOT change any number to make totals add \
 up. The printed totals sometimes genuinely disagree, and those disagreements are \
 evidence the researchers need to see.
-- as_printed: the characters as they appear, e.g. "60", "6c" for a damaged 0, "—" \
-for a dash, "" for nothing printed.
+- Zeros are often damaged and print like "c" or "o" (e.g. "6c" or "3o"). Write every \
+damaged zero as 0, in both as_printed and value ("6c" becomes "60").
+- as_printed: the characters as they appear, with damaged zeros written as 0, e.g. \
+"60", "—" for a dash, "" for nothing printed.
 - value: your best reading as an integer, or null if the cell is blank, a dash, or \
 unreadable.
 - legibility: "clear"; "uncertain" if you are not sure of every digit; "illegible" \
 if you cannot read it; "blank" if nothing or only a dash is printed.
-- printed_label: the row label as printed, with the long s written as "s", without \
-the leader dashes. Join a label split over two lines (e.g. "A Hundred" / "and one" \
+- printed_label: the row label as printed (keep misprints such as "A Huudred"), with \
+the long s written as "s", without the leader dashes. Join a label split over two lines (e.g. "A Hundred" / "and one" \
 becomes "A Hundred and one").
 - If one number sits beside a brace covering several lines, give it to the row \
 whose label the brace joins, and say so in transcriber_notes.
