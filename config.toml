@@ -1,0 +1,21 @@
+# All pipeline settings live here. Change a value, commit it, and rerun.
+
+[paths]
+raw_images = "data/raw"              # images copied from Google Drive (rclone) or a laptop folder
+manifest = "data/manifest.csv"
+transcriptions = "data/transcriptions" # one JSON per image per run; the frozen AI record
+corrections = "data/corrections.csv"   # human edits, applied by build_csv.py
+output = "data/output"
+ground_truth = "ground_truth/age_tables.csv"
+
+[transcription]
+model = "claude-opus-5"
+effort = "high"          # low | medium | high | xhigh | max
+max_tokens = 16000
+max_long_edge_px = 2000  # larger scans are downscaled (deterministically) before sending
+primary_run = "a"        # the run whose values go into the CSVs
+check_run = "b"          # optional second, independent run; disagreements are flagged
+
+[checks]
+# Consecutive bills are expected to be this many days apart when week_ending is filled in.
+week_length_days = 7
