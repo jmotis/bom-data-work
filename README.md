@@ -35,11 +35,14 @@ logged in to a Claude subscription whose plan includes the model set in `config.
 ```bash
 git clone https://github.com/jmotis/bom-data-work.git
 cd bom-data-work
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install --user -r requirements.txt   # installs pillow, the only extra package
 claude          # first time only: type /login, sign in with your Claude account, then /exit
 claude auth status   # should show "loggedIn": true
 ```
+
+If `pip` stops with an "externally-managed-environment" error (common with Homebrew
+Python on a Mac), add `--break-system-packages` to that command. With `--user` it still
+installs only into your own account, not the system's Python.
 
 `transcribe.py` removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from each
 `claude` call, so an API key set in your terminal is never billed by mistake. It also
@@ -75,7 +78,7 @@ this step.
 
 ### 3. `make transcribe` (the AI step)
 
-Try `python scripts/transcribe.py --limit 5` first. Each page takes about 15–25
+Try `python3 scripts/transcribe.py --limit 5` first. Each page takes about 15–25
 seconds. Images that already have a saved transcription are skipped, so the step can be
 stopped with Ctrl-C and restarted. A page that fails is not saved and is tried again on
 the next run. After three failures in a row the script stops, which usually means the
